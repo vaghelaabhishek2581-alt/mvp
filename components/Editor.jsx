@@ -270,13 +270,24 @@ const createDocumentWorker = () => {
 function EditorCore({ documentId, userId, onUsersChange }) {
   // Use callback ref instead of useRef for better DOM timing
   const [editorElement, setEditorElement] = useState(null);
-  const editorRef = useCallback((node) => {
-    console.log('Editor ref callback:', !!node);
-    if (node !== null) {
-      setEditorElement(node);
-    }
-  }, []);
+const editorRef = useCallback((node) => {
+  console.log('Editor ref callback triggered:', !!node);
+  addDebugLog(`Callback ref triggered with node: ${!!node}`);
   
+  if (node !== null) {
+    addDebugLog('DOM element ready, setting editorElement');
+    // Add additional validation
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      addDebugLog('Node is valid DOM element');
+      setEditorElement(node);
+    } else {
+      addDebugLog('Node is not a valid DOM element');
+    }
+  } else {
+    addDebugLog('Callback ref called with null, clearing editorElement');
+    setEditorElement(null);
+  }
+}, [addDebugLog]); // Include addDebugLog as dependency
   const viewRef = useRef(null);
   const ydocRef = useRef(null);
   const providerRef = useRef(null);
