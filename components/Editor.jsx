@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { history } from 'prosemirror-history';
-import { FixedSizeList as List } from 'react-window';
 import * as Y from 'yjs';
 import * as YProsemirror from 'y-prosemirror';
 import { screenplaySchema, screenplayElementTypes } from '@/lib/prosemirror/schema';
@@ -170,28 +169,6 @@ export default function Editor({ documentId, userId, onUsersChange }) {
     return elements;
   };
 
-  const PageComponent = ({ index, style }) => (
-    <div style={style} className="page-container">
-      <div className="page">
-        <div className="page-number">{index + 1}.</div>
-        <div className="page-content">
-          {/* Page content would be rendered here */}
-          <div className="screenplay-elements">
-            {pages[index]?.map((element, elementIndex) => (
-              <div 
-                key={elementIndex}
-                className={`screenplay-element element-${element.node.attrs.type}`}
-                data-type={element.node.attrs.type}
-              >
-                {element.node.textContent}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
   return (
     <div className="editor-container">
       {/* Toolbar */}
@@ -210,22 +187,36 @@ export default function Editor({ documentId, userId, onUsersChange }) {
 
       {/* Editor */}
       <div className="editor-wrapper">
-        {pages.length > 0 ? (
-          <List
-            height={800}
-            itemCount={pages.length}
-            itemSize={PAGE_HEIGHT + 40} // Page height + margin
-            width="100%"
-          >
-            {PageComponent}
-          </List>
-        ) : (
-          <div className="page-container">
-            <div className="page">
-              <div className="page-content" ref={editorRef} />
+        <div className="pages-container" style={{ height: '800px', overflow: 'auto' }}>
+          {pages.length > 0 ? (
+            pages.map((page, index) => (
+              <div key={index} className="page-container">
+                <div className="page">
+                  <div className="page-number">{index + 1}.</div>
+                  <div className="page-content">
+                    <div className="screenplay-elements">
+                      {page?.map((element, elementIndex) => (
+                        <div 
+                          key={elementIndex}
+                          className={`screenplay-element element-${element.node.attrs.type}`}
+                          data-type={element.node.attrs.type}
+                        >
+                          {element.node.textContent}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="page-container">
+              <div className="page">
+                <div className="page-content" ref={editorRef} />
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
