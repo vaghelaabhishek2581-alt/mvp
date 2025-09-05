@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'export',
+  transpilePackages: ['y-prosemirror'],
   eslint: {
     ignoreDuringBuilds: true,
   },
