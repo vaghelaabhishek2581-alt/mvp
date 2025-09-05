@@ -6,7 +6,7 @@ import { EditorView } from 'prosemirror-view';
 import { history } from 'prosemirror-history';
 import { FixedSizeList as List } from 'react-window';
 import * as Y from 'yjs';
-import { ySyncPlugin, yCollab, yUndoPlugin } from 'y-prosemirror';
+import * as YProsemirror from 'y-prosemirror';
 import { screenplaySchema, screenplayElementTypes } from '@/lib/prosemirror/schema';
 import { screenplayKeymap } from '@/lib/prosemirror/keymap';
 import { screenplayCommands } from '@/lib/prosemirror/commands';
@@ -52,9 +52,9 @@ export default function Editor({ documentId, userId, onUsersChange }) {
     const state = EditorState.create({
       schema: screenplaySchema,
       plugins: [
-        ySyncPlugin(yXmlFragment),
-        yCollab(yXmlFragment),
-        yUndoPlugin(),
+        YProsemirror.ySyncPlugin(yXmlFragment),
+        YProsemirror.yCollab(yXmlFragment),
+        YProsemirror.yUndoPlugin(),
         history(),
         screenplayKeymap
       ]
