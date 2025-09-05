@@ -169,40 +169,68 @@ export default function Editor({ documentId, userId, onUsersChange }) {
   const [isInitialized, setIsInitialized] = useState(false);
   const [processingPages, setProcessingPages] = useState(false);
   const [workerPool, setWorkerPool] = useState([]);
+  const [initializationStatus, setInitializationStatus] = useState('Starting...');
+  const [debugLogs, setDebugLogs] = useState([]);
+
+  // Debug logging function
+  const addDebugLog = (message) => {
+    console.log(`[Editor Debug] ${message}`);
+    setDebugLogs(prev => [...prev, `${new Date().toISOString()}: ${message}`]);
+  };
 
   // Initialize worker pool
   useEffect(() => {
+    addDebugLog('Starting worker pool initialization');
+    setInitializationStatus('Creating Web Workers...');
+    
     const numWorkers = Math.min(navigator.hardwareConcurrency || 4, 8); // Max 8 workers
     const workers = [];
     
-    console.log(`Initializing ${numWorkers} web workers for pagination`);
+    addDebugLog(`Attempting to create ${numWorkers} web workers for pagination`);
     
     for (let i = 0; i < numWorkers; i++) {
       try {
+        addDebugLog(`Creating pagination worker ${i + 1}/${numWorkers}`);
         const worker = createPaginationWorker();
+        if (worker) {
+          addDebugLog(`Pagination worker ${i + 1} created successfully`);
+        } else {
+          addDebugLog(`Pagination worker ${i + 1} creation returned null/undefined`);
+        }
         workers.push(worker);
       } catch (error) {
-        console.warn('Failed to create worker:', error);
+        addDebugLog(`Failed to create pagination worker ${i + 1}: ${error.message}`);
+        console.error('Worker creation error:', error);
       }
     }
     
     // Create document processing worker
     try {
+      addDebugLog('Creating document processing worker');
       documentWorkerRef.current = createDocumentWorker();
+      if (documentWorkerRef.current) {
+        addDebugLog('Document processing worker created successfully');
+      } else {
+        addDebugLog('Document processing worker creation returned null/undefined');
+      }
     } catch (error) {
-      console.warn('Failed to create document worker:', error);
+      addDebugLog(`Failed to create document worker: ${error.message}`);
+      console.error('Document worker creation error:', error);
     }
     
     paginationWorkersRef.current = workers;
     setWorkerPool(workers);
+    addDebugLog(`Worker pool initialization complete. Created ${workers.length} workers successfully`);
+    setInitializationStatus(`Worker pool ready (${workers.length} workers)`);
     
     return () => {
       // Cleanup workers
+      addDebugLog('Cleaning up workers');
       workers.forEach(worker => {
         try {
           worker.terminate();
         } catch (error) {
-          console.warn('Error terminating worker:', error);
+          addDebugLog(`Error terminating worker: ${error.message}`);
         }
       });
       
@@ -210,7 +238,7 @@ export default function Editor({ documentId, userId, onUsersChange }) {
         try {
           documentWorkerRef.current.terminate();
         } catch (error) {
-          console.warn('Error terminating document worker:', error);
+          addDebugLog(`Error terminating document worker: ${error.message}`);
         }
       }
     };
@@ -414,32 +442,41 @@ export default function Editor({ documentId, userId, onUsersChange }) {
   useEffect(() => {
     if (!documentId || !userId || !editorRef.current) return;
 
-    console.log('Initializing editor with multi-threading support:', { documentId, userId });
+    addDebugLog(`Starting editor initialization with documentId: ${documentId}, userId: ${userId}`);
+    setInitializationStatus('Initializing ProseMirror and Y.js...');
 
     try {
       // Initialize Yjs
+      addDebugLog('Creating Y.js document');
       ydocRef.current = new Y.Doc();
       const yXmlFragment = ydocRef.current.getXmlFragment('prosemirror');
+      addDebugLog('Y.js document and fragment created');
 
       // Initialize socket provider
+      addDebugLog('Creating socket provider');
       providerRef.current = new YSocketProvider(documentId, ydocRef.current);
+      addDebugLog('Socket provider created');
       
       providerRef.current.onConnect = () => {
-        console.log('Connected to document');
+        addDebugLog('Socket connected to document');
       };
       
       providerRef.current.onUserJoined = (socketId, userId, userInfo) => {
-        console.log('User joined:', userId);
+        addDebugLog(`User joined: ${userId} (socket: ${socketId})`);
       };
       
       providerRef.current.onCurrentUsers = (users) => {
+        addDebugLog(`Current users updated: ${users.length} users`);
         onUsersChange?.(users);
       };
 
       // Join document
+      addDebugLog('Joining document');
       providerRef.current.joinDocument(userId);
+      addDebugLog('Document join request sent');
 
       // Create ProseMirror state
+      addDebugLog('Creating ProseMirror state with plugins');
       const state = EditorState.create({
         schema: screenplaySchema,
         plugins: [
@@ -449,15 +486,17 @@ export default function Editor({ documentId, userId, onUsersChange }) {
           screenplayKeymap
         ]
       });
+      addDebugLog('ProseMirror state created');
 
       // Create editor view with throttled updates for performance
       let updateTimeout = null;
       
+      addDebugLog('Creating ProseMirror editor view');
       viewRef.current = new EditorView(editorRef.current, {
         state,
         dispatchTransaction: (transaction) => {
           if (!viewRef.current || !viewRef.current.state) {
-            console.warn('EditorView or state not ready for transaction');
+            addDebugLog('Transaction dispatch warning: EditorView or state not ready');
             return;
           }
           
@@ -479,27 +518,39 @@ export default function Editor({ documentId, userId, onUsersChange }) {
               setCurrentElementType(currentNode.attrs.type);
             }
           } catch (error) {
-            console.error('Error applying transaction:', error);
+            addDebugLog(`Error applying transaction: ${error.message}`);
+            console.error('Transaction error:', error);
           }
         }
       });
+      addDebugLog('ProseMirror editor view created');
 
+      addDebugLog('Performing initial page update');
       updatePages(viewRef.current);
+      
+      addDebugLog('Editor initialization completed successfully');
       setIsInitialized(true);
+      setInitializationStatus('Ready');
 
     } catch (error) {
-      console.error('Error initializing editor:', error);
+      addDebugLog(`Critical error during initialization: ${error.message}`);
+      console.error('Editor initialization error:', error);
+      setInitializationStatus(`Error: ${error.message}`);
+      // Set initialized to true anyway to show error state
+      setIsInitialized(true);
     }
 
     return () => {
-      console.log('Cleaning up editor...');
+      addDebugLog('Starting editor cleanup');
       setIsInitialized(false);
+      setInitializationStatus('Cleaning up...');
       
       if (viewRef.current) {
         try {
           viewRef.current.destroy();
+          addDebugLog('ProseMirror view destroyed');
         } catch (error) {
-          console.error('Error destroying editor view:', error);
+          addDebugLog(`Error destroying editor view: ${error.message}`);
         }
         viewRef.current = null;
       }
@@ -507,8 +558,9 @@ export default function Editor({ documentId, userId, onUsersChange }) {
       if (providerRef.current) {
         try {
           providerRef.current.destroy();
+          addDebugLog('Socket provider destroyed');
         } catch (error) {
-          console.error('Error destroying provider:', error);
+          addDebugLog(`Error destroying provider: ${error.message}`);
         }
         providerRef.current = null;
       }
@@ -516,11 +568,14 @@ export default function Editor({ documentId, userId, onUsersChange }) {
       if (ydocRef.current) {
         try {
           ydocRef.current.destroy();
+          addDebugLog('Y.js document destroyed');
         } catch (error) {
-          console.error('Error destroying Y.js doc:', error);
+          addDebugLog(`Error destroying Y.js doc: ${error.message}`);
         }
         ydocRef.current = null;
       }
+      
+      addDebugLog('Editor cleanup completed');
     };
   }, [documentId, userId, updatePages]);
 
@@ -649,8 +704,19 @@ export default function Editor({ documentId, userId, onUsersChange }) {
       <div className="editor-wrapper">
         {!isInitialized ? (
           <div className="editor-loading">
-            <div>Initializing editor...</div>
+            <div className="text-lg font-semibold mb-4">Initializing editor...</div>
+            <div className="text-sm text-gray-600 mb-4">{initializationStatus}</div>
             <div>Setting up {workerPool.length} web workers for optimization</div>
+            <div className="mt-6">
+              <details className="text-xs">
+                <summary className="cursor-pointer mb-2">Debug Logs ({debugLogs.length})</summary>
+                <div className="max-h-48 overflow-y-auto bg-gray-100 p-2 rounded border text-xs font-mono">
+                  {debugLogs.map((log, index) => (
+                    <div key={index} className="mb-1">{log}</div>
+                  ))}
+                </div>
+              </details>
+            </div>
           </div>
         ) : pages.length > 0 ? (
           <List
