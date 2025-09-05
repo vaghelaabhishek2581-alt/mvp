@@ -62,12 +62,12 @@ export default function Editor({ documentId, userId, onUsersChange }) {
     // Create editor view
     viewRef.current = new EditorView(editorRef.current, {
       state,
-      dispatchTransaction: (transaction) => {
-        const newState = viewRef.current.state.apply(transaction);
-        viewRef.current.updateState(newState);
+      dispatchTransaction: (transaction, view) => {
+        const newState = view.state.apply(transaction);
+        view.updateState(newState);
         
         // Update pages when content changes
-        updatePages();
+        updatePages(view);
         
         // Track current element type
         const { $head } = newState.selection;
@@ -78,8 +78,8 @@ export default function Editor({ documentId, userId, onUsersChange }) {
       }
     });
 
-    const updatePages = () => {
-      const doc = viewRef.current.state.doc;
+    const updatePages = (view) => {
+      const doc = view.state.doc;
       const newPages = [];
       let currentPage = [];
       let currentPageHeight = 0;
@@ -106,7 +106,7 @@ export default function Editor({ documentId, userId, onUsersChange }) {
       setPages(newPages);
     };
 
-    updatePages();
+    updatePages(viewRef.current);
 
     return () => {
       if (viewRef.current) {
