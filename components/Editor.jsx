@@ -11,7 +11,7 @@ import { screenplaySchema, screenplayElementTypes } from '@/lib/prosemirror/sche
 import { screenplayKeymap } from '@/lib/prosemirror/keymap';
 import { screenplayCommands } from '@/lib/prosemirror/commands';
 import { YSocketProvider } from '@/lib/ySocketProvider';
-
+import React from 'react'
 // Error Boundary Component
 class EditorErrorBoundary extends React.Component {
   constructor(props) {
