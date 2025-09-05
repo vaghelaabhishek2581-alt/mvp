@@ -294,6 +294,19 @@ const editorRef = useCallback((node) => {
     addDebugLog(`EditorElement details: tag=${editorElement.tagName}, id=${editorElement.id}, className=${editorElement.className}`);
   }
 }, [editorElement, addDebugLog]);
+  const checkDOMState = useCallback(() => {
+  const container = document.querySelector('.editor-container');
+  const pageContent = document.querySelector('[data-editor="prosemirror"]');
+  
+  addDebugLog(`Manual DOM check - container: ${!!container}, pageContent: ${!!pageContent}`);
+  console.log('DOM State Check:', {
+    container: !!container,
+    pageContent: !!pageContent,
+    editorElement: !!editorElement
+  });
+  
+  return { container: !!container, pageContent: !!pageContent };
+}, [editorElement, addDebugLog]);
   const viewRef = useRef(null);
   const ydocRef = useRef(null);
   const providerRef = useRef(null);
