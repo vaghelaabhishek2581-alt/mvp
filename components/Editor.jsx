@@ -186,6 +186,54 @@ export default function Editor({ documentId, userId, onUsersChange }) {
   const [initializationStatus, setInitializationStatus] = useState('Starting...');
   const [debugLogs, setDebugLogs] = useState([]);
 
+  // DOM readiness check - runs BEFORE main initialization
+  useEffect(() => {
+    // Wait for DOM element to be ready
+    const checkDOMReady = () => {
+      if (editorRef.current) {
+        addDebugLog('DOM element is now ready, triggering initialization');
+        return true;
+      }
+      return false;
+    };
+
+    // If DOM is not ready, wait for it
+    if (!editorRef.current) {
+      addDebugLog('DOM element not ready, setting up observer');
+      
+      const observer = new MutationObserver(() => {
+        if (checkDOMReady()) {
+          observer.disconnect();
+          // Trigger a re-render to run the main initialization
+          setInitializationStatus('DOM Ready - Starting initialization...');
+        }
+      });
+
+      // Start observing
+      if (document.body) {
+        observer.observe(document.body, { 
+          childList: true, 
+          subtree: true 
+        });
+      }
+
+      // Also try a simple timeout fallback
+      const timeoutId = setTimeout(() => {
+        if (checkDOMReady()) {
+          observer.disconnect();
+          setInitializationStatus('DOM Ready (timeout) - Starting initialization...');
+        } else {
+          addDebugLog('DOM still not ready after timeout');
+        }
+      }, 100);
+
+      return () => {
+        observer.disconnect();
+        clearTimeout(timeoutId);
+      };
+    }
+  }, []); // Empty dependency array - only run once
+
   // Debug logging function
   const addDebugLog = (message) => {
     console.log(`[Editor Debug] ${message}`);
@@ -457,17 +505,19 @@ export default function Editor({ documentId, userId, onUsersChange }) {
     addDebugLog('=== INITIALIZATION START ===');
     addDebugLog(`Props check - documentId: ${!!documentId}, userId: ${!!userId}, editorRef: ${!!editorRef.current}`);
     
+    // Add DOM readiness check at the start
     if (!documentId || !userId) {
-      addDebugLog('CRITICAL: Missing documentId or userId');
+      addDebugLog('Missing required props - documentId or userId');
       setInitializationStatus('Error: Missing required props');
       return;
     }
     
     if (!editorRef.current) {
-      addDebugLog('CRITICAL: editorRef.current is null - DOM element not ready');
-      setInitializationStatus('Error: DOM element not ready');
-      return;
+      addDebugLog('DOM element still not ready, waiting...');
+      return; // Exit early, let the DOM observer handle it
     }
+
+    addDebugLog(`Starting editor initialization with documentId: ${documentId}, userId: ${userId}`);
 
     // Additional import validation
     const importChecks = {
