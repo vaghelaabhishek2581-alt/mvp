@@ -348,188 +348,183 @@ function EditorCore({ documentId, userId, onUsersChange }) {
 
   // Alternative initialization strategy with polling
 
-  useEffect(() => {
-    let mounted = true;
+useEffect(() => {
+  let mounted = true;
+  
+  // Skip if no required props
+  if (!documentId || !userId) {
+    addDebugLog('Missing required props - documentId or userId');
+    setInitializationStatus('Error: Missing required props');
+    return;
+  }
+  
+  // Skip if no DOM element ready
+  if (!editorElement) {
+    addDebugLog('DOM element not ready, waiting for next render cycle');
+    setInitializationStatus('Waiting for DOM element...');
+    return; // Exit early, let the dependency array handle re-running
+  }
+  
+  addDebugLog('=== INITIALIZATION START ===');
+  addDebugLog(`Props check - documentId: ${!!documentId}, userId: ${!!userId}, editorElement: ${!!editorElement}`);
+
+  const initializeEditor = async () => {
+    try {
+      // Validate imports first
+      addDebugLog('Validating imports...');
+      validateImports();
+      
+      addDebugLog(`Starting editor initialization with documentId: ${documentId}, userId: ${userId}`);
+      setInitializationStatus('Initializing ProseMirror and Y.js...');
+
+      addDebugLog('Step 1: Creating Y.js document...');
+      ydocRef.current = new Y.Doc();
+      addDebugLog('Y.js document created successfully');
+      
+      addDebugLog('Step 2: Getting XML fragment...');
+      const yXmlFragment = ydocRef.current.getXmlFragment('prosemirror');
+      addDebugLog('XML fragment obtained successfully');
+
+      addDebugLog('Step 3: Creating socket provider...');
+      providerRef.current = new YSocketProvider(documentId, ydocRef.current);
+      addDebugLog('Socket provider created successfully');
+      
+      providerRef.current.onConnect = () => {
+        addDebugLog('Socket connected to document');
+      };
+      
+      providerRef.current.onUserJoined = (socketId, userId, userInfo) => {
+        addDebugLog(`User joined: ${userId} (socket: ${socketId})`);
+      };
+      
+      providerRef.current.onCurrentUsers = (users) => {
+        addDebugLog(`Current users updated: ${users.length} users`);
+        onUsersChange?.(users);
+      };
+
+      addDebugLog('Step 4: Joining document...');
+      providerRef.current.joinDocument(userId);
+      addDebugLog('Document join request sent');
+
+      addDebugLog('Step 5: Creating ProseMirror plugins...');
+      const plugins = [
+        YProsemirror.ySyncPlugin(yXmlFragment),
+        YProsemirror.yUndoPlugin(),
+        history(),
+        screenplayKeymap
+      ];
+      
+      addDebugLog(`Created ${plugins.length} plugins successfully`);
+
+      addDebugLog('Step 6: Creating ProseMirror state...');
+      const state = EditorState.create({
+        schema: screenplaySchema,
+        plugins: plugins
+      });
+      addDebugLog('ProseMirror state created successfully');
+
+      addDebugLog('Step 7: Creating ProseMirror editor view...');
+      let updateTimeout = null;
+      
+      viewRef.current = new EditorView(editorElement, {
+        state,
+        dispatchTransaction: (transaction) => {
+          if (!viewRef.current || !viewRef.current.state) {
+            addDebugLog('Transaction dispatch warning: EditorView or state not ready');
+            return;
+          }
+          
+          try {
+            addDebugLog('Processing transaction...');
+            const view = viewRef.current;
+            const newState = view.state.apply(transaction);
+            view.updateState(newState);
+            
+            // Throttle page updates
+            if (updateTimeout) clearTimeout(updateTimeout);
+            updateTimeout = setTimeout(() => {
+              updatePages(view);
+              addDebugLog('Page update completed');
+            }, 150);
+            
+            // Track current element type
+            const { $head } = newState.selection;
+            const currentNode = $head.node();
+            if (currentNode && currentNode.attrs && currentNode.attrs.type) {
+              setCurrentElementType(currentNode.attrs.type);
+            }
+          } catch (error) {
+            addDebugLog(`Error applying transaction: ${error.message}`);
+            console.error('Transaction error:', error);
+          }
+        }
+      });
+      addDebugLog('ProseMirror editor view created successfully');
+
+      addDebugLog('Step 8: Performing initial page update...');
+      updatePages(viewRef.current);
+      addDebugLog('Initial page update completed');
+      
+      if (mounted) {
+        addDebugLog('=== INITIALIZATION COMPLETED SUCCESSFULLY ===');
+        setIsInitialized(true);
+        setInitializationStatus('Ready');
+      }
+
+    } catch (error) {
+      addDebugLog(`=== CRITICAL ERROR DURING INITIALIZATION ===`);
+      addDebugLog(`Error message: ${error.message}`);
+      addDebugLog(`Error stack: ${error.stack}`);
+      console.error('Editor initialization error:', error);
+      if (mounted) {
+        setInitializationStatus(`Error: ${error.message}`);
+        setIsInitialized(true); // Show error state
+      }
+    }
+  };
+  
+  // Run initialization immediately since we know editorElement exists
+  initializeEditor();
+  
+  return () => {
+    mounted = false;
+    addDebugLog('Starting editor cleanup');
+    setIsInitialized(false);
+    setInitializationStatus('Cleaning up...');
     
-    addDebugLog('=== INITIALIZATION START ===');
-    addDebugLog(`Props check - documentId: ${!!documentId}, userId: ${!!userId}, editorElement: ${!!editorElement}`);
-    
-    if (!documentId || !userId) {
-      addDebugLog('Missing required props - documentId or userId');
-      setInitializationStatus('Error: Missing required props');
-      return;
+    if (viewRef.current) {
+      try {
+        viewRef.current.destroy();
+        addDebugLog('ProseMirror view destroyed');
+      } catch (error) {
+        addDebugLog(`Error destroying editor view: ${error.message}`);
+      }
+      viewRef.current = null;
     }
     
-    const initializeWhenReady = async () => {
-      // Wait for DOM element
-      addDebugLog('Waiting for DOM element...');
-      while (!editorElement && mounted) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      
-      if (!mounted) {
-        addDebugLog('Component unmounted during initialization');
-        return;
-      }
-      
-      addDebugLog('DOM element is ready, starting initialization');
-
+    if (providerRef.current) {
       try {
-        // Validate imports first
-        addDebugLog('Validating imports...');
-        validateImports();
-        
-        addDebugLog(`Starting editor initialization with documentId: ${documentId}, userId: ${userId}`);
-        setInitializationStatus('Initializing ProseMirror and Y.js...');
-
-        addDebugLog('Step 1: Creating Y.js document...');
-        ydocRef.current = new Y.Doc();
-        addDebugLog('Y.js document created successfully');
-        
-        addDebugLog('Step 2: Getting XML fragment...');
-        const yXmlFragment = ydocRef.current.getXmlFragment('prosemirror');
-        addDebugLog('XML fragment obtained successfully');
-
-        addDebugLog('Step 3: Creating socket provider...');
-        providerRef.current = new YSocketProvider(documentId, ydocRef.current);
-        addDebugLog('Socket provider created successfully');
-        
-        providerRef.current.onConnect = () => {
-          addDebugLog('Socket connected to document');
-        };
-        
-        providerRef.current.onUserJoined = (socketId, userId, userInfo) => {
-          addDebugLog(`User joined: ${userId} (socket: ${socketId})`);
-        };
-        
-        providerRef.current.onCurrentUsers = (users) => {
-          addDebugLog(`Current users updated: ${users.length} users`);
-          onUsersChange?.(users);
-        };
-
-        addDebugLog('Step 4: Joining document...');
-        providerRef.current.joinDocument(userId);
-        addDebugLog('Document join request sent');
-
-        addDebugLog('Step 5: Creating ProseMirror plugins...');
-        const plugins = [
-          YProsemirror.ySyncPlugin(yXmlFragment),
-          YProsemirror.yUndoPlugin(),
-          history(),
-          screenplayKeymap
-        ];
-        
-        addDebugLog(`Created ${plugins.length} plugins successfully`);
-
-        addDebugLog('Step 6: Creating ProseMirror state...');
-        const state = EditorState.create({
-          schema: screenplaySchema,
-          plugins: plugins
-        });
-        addDebugLog('ProseMirror state created successfully');
-
-        addDebugLog('Step 7: Creating ProseMirror editor view...');
-        let updateTimeout = null;
-        
-        viewRef.current = new EditorView(editorElement, {
-          state,
-          dispatchTransaction: (transaction) => {
-            if (!viewRef.current || !viewRef.current.state) {
-              addDebugLog('Transaction dispatch warning: EditorView or state not ready');
-              return;
-            }
-            
-            try {
-              addDebugLog('Processing transaction...');
-              const view = viewRef.current;
-              const newState = view.state.apply(transaction);
-              view.updateState(newState);
-              
-              // Throttle page updates
-              if (updateTimeout) clearTimeout(updateTimeout);
-              updateTimeout = setTimeout(() => {
-                updatePages(view);
-                addDebugLog('Page update completed');
-              }, 150);
-              
-              // Track current element type
-              const { $head } = newState.selection;
-              const currentNode = $head.node();
-              if (currentNode && currentNode.attrs && currentNode.attrs.type) {
-                setCurrentElementType(currentNode.attrs.type);
-              }
-            } catch (error) {
-              addDebugLog(`Error applying transaction: ${error.message}`);
-              console.error('Transaction error:', error);
-            }
-          }
-        });
-        addDebugLog('ProseMirror editor view created successfully');
-
-        addDebugLog('Step 8: Performing initial page update...');
-        updatePages(viewRef.current);
-        addDebugLog('Initial page update completed');
-        
-        if (mounted) {
-          addDebugLog('=== INITIALIZATION COMPLETED SUCCESSFULLY ===');
-          setIsInitialized(true);
-          setInitializationStatus('Ready');
-        }
-
+        providerRef.current.destroy();
+        addDebugLog('Socket provider destroyed');
       } catch (error) {
-        addDebugLog(`=== CRITICAL ERROR DURING INITIALIZATION ===`);
-        addDebugLog(`Error message: ${error.message}`);
-        addDebugLog(`Error stack: ${error.stack}`);
-        console.error('Editor initialization error:', error);
-        if (mounted) {
-          setInitializationStatus(`Error: ${error.message}`);
-          setIsInitialized(true); // Show error state
-        }
+        addDebugLog(`Error destroying provider: ${error.message}`);
       }
-    };
+      providerRef.current = null;
+    }
     
-    initializeWhenReady();
+    if (ydocRef.current) {
+      try {
+        ydocRef.current.destroy();
+        addDebugLog('Y.js document destroyed');
+      } catch (error) {
+        addDebugLog(`Error destroying Y.js doc: ${error.message}`);
+      }
+      ydocRef.current = null;
+    }
     
-    return () => {
-      mounted = false;
-      addDebugLog('Starting editor cleanup');
-      setIsInitialized(false);
-      setInitializationStatus('Cleaning up...');
-      
-      if (viewRef.current) {
-        try {
-          viewRef.current.destroy();
-          addDebugLog('ProseMirror view destroyed');
-        } catch (error) {
-          addDebugLog(`Error destroying editor view: ${error.message}`);
-        }
-        viewRef.current = null;
-      }
-      
-      if (providerRef.current) {
-        try {
-          providerRef.current.destroy();
-          addDebugLog('Socket provider destroyed');
-        } catch (error) {
-          addDebugLog(`Error destroying provider: ${error.message}`);
-        }
-        providerRef.current = null;
-      }
-      
-      if (ydocRef.current) {
-        try {
-          ydocRef.current.destroy();
-          addDebugLog('Y.js document destroyed');
-        } catch (error) {
-          addDebugLog(`Error destroying Y.js doc: ${error.message}`);
-        }
-        ydocRef.current = null;
-      }
-      
-      addDebugLog('Editor cleanup completed');
-    };
-  }, [documentId, userId, editorElement, updatePages]);
-
+    addDebugLog('Editor cleanup completed');
+  };
+}, [documentId, userId, editorElement, updatePages]);
   // Fixed executeCommand function
   const executeCommand = useCallback((commandName) => {
     if (!viewRef.current || !isInitialized) {
