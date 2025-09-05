@@ -268,9 +268,22 @@ const createDocumentWorker = () => {
 
 // Main Editor Component (wrapped in error boundary)
 function EditorCore({ documentId, userId, onUsersChange }) {
-  // Use callback ref instead of useRef for better DOM timing
+  // State declarations first
   const [editorElement, setEditorElement] = useState(null);
-const editorRef = useCallback((node) => {
+  const [pages, setPages] = useState([]);
+  const [currentElementType, setCurrentElementType] = useState('action');
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [initializationStatus, setInitializationStatus] = useState('Starting...');
+  const [debugLogs, setDebugLogs] = useState([]);
+
+  // Define addDebugLog FIRST with useCallback
+  const addDebugLog = useCallback((message) => {
+    console.log(`[Editor Debug] ${message}`);
+    setDebugLogs(prev => [...prev, `${new Date().toISOString()}: ${message}`]);
+  }, []);
+
+  // Use callback ref instead of useRef for better DOM timing
+  const editorRef = useCallback((node) => {
   console.log('Editor ref callback triggered:', !!node);
   addDebugLog(`Callback ref triggered with node: ${!!node}`);
   
@@ -288,12 +301,14 @@ const editorRef = useCallback((node) => {
     setEditorElement(null);
   }
 }, [addDebugLog]); // Include addDebugLog as dependency
+
   useEffect(() => {
   addDebugLog(`EditorElement changed: ${!!editorElement}`);
   if (editorElement) {
     addDebugLog(`EditorElement details: tag=${editorElement.tagName}, id=${editorElement.id}, className=${editorElement.className}`);
   }
 }, [editorElement, addDebugLog]);
+
   const checkDOMState = useCallback(() => {
   const container = document.querySelector('.editor-container');
   const pageContent = document.querySelector('[data-editor="prosemirror"]');
@@ -307,20 +322,11 @@ const editorRef = useCallback((node) => {
   
   return { container: !!container, pageContent: !!pageContent };
 }, [editorElement, addDebugLog]);
+
+  // Refs
   const viewRef = useRef(null);
   const ydocRef = useRef(null);
   const providerRef = useRef(null);
-  const [pages, setPages] = useState([]);
-  const [currentElementType, setCurrentElementType] = useState('action');
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [initializationStatus, setInitializationStatus] = useState('Starting...');
-  const [debugLogs, setDebugLogs] = useState([]);
-
-  // Debug logging function
-  const addDebugLog = (message) => {
-    console.log(`[Editor Debug] ${message}`);
-    setDebugLogs(prev => [...prev, `${new Date().toISOString()}: ${message}`]);
-  };
 
   const calculateElementHeight = (node) => {
     const baseHeight = 24;
