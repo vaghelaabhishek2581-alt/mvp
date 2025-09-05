@@ -53,7 +53,7 @@ export default function Editor({ documentId, userId, onUsersChange }) {
       schema: screenplaySchema,
       plugins: [
         ySyncPlugin(yXmlFragment),
-        yCollab.plugin(yXmlFragment),
+        yCollab(yXmlFragment),
         yUndoPlugin(),
         history(),
         screenplayKeymap
