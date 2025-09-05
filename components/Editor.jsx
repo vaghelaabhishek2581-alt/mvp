@@ -288,6 +288,12 @@ const editorRef = useCallback((node) => {
     setEditorElement(null);
   }
 }, [addDebugLog]); // Include addDebugLog as dependency
+  useEffect(() => {
+  addDebugLog(`EditorElement changed: ${!!editorElement}`);
+  if (editorElement) {
+    addDebugLog(`EditorElement details: tag=${editorElement.tagName}, id=${editorElement.id}, className=${editorElement.className}`);
+  }
+}, [editorElement, addDebugLog]);
   const viewRef = useRef(null);
   const ydocRef = useRef(null);
   const providerRef = useRef(null);
