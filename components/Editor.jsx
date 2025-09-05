@@ -62,7 +62,13 @@ export default function Editor({ documentId, userId, onUsersChange }) {
     // Create editor view
     viewRef.current = new EditorView(editorRef.current, {
       state,
-      dispatchTransaction: (transaction, view) => {
+      dispatchTransaction: (transaction) => {
+        if (!viewRef.current || !viewRef.current.state) {
+          console.warn('EditorView or state not ready');
+          return;
+        }
+        
+        const view = viewRef.current;
         const newState = view.state.apply(transaction);
         view.updateState(newState);
         
