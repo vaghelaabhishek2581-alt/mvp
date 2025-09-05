@@ -12,6 +12,20 @@ import { screenplayKeymap } from '@/lib/prosemirror/keymap';
 import { screenplayCommands } from '@/lib/prosemirror/commands';
 import { YSocketProvider } from '@/lib/ySocketProvider';
 
+// === IMPORT DEBUGGING ===
+console.log('=== EDITOR.JSX IMPORT CHECK ===');
+console.log('EditorState:', EditorState);
+console.log('EditorView:', EditorView);
+console.log('history:', history);
+console.log('Y:', Y);
+console.log('YProsemirror:', YProsemirror);
+console.log('screenplaySchema:', screenplaySchema);
+console.log('screenplayElementTypes:', screenplayElementTypes);
+console.log('screenplayKeymap:', screenplayKeymap);
+console.log('screenplayCommands:', screenplayCommands);
+console.log('YSocketProvider:', YSocketProvider);
+console.log('=== END IMPORT CHECK ===');
+
 const ELEMENTS_PER_PAGE = 15;
 const PAGE_HEIGHT = 1122;
 const WORKER_CHUNK_SIZE = 50; // Process pages in chunks of 50
@@ -440,22 +454,61 @@ export default function Editor({ documentId, userId, onUsersChange }) {
   }, []);
 
   useEffect(() => {
-    if (!documentId || !userId || !editorRef.current) return;
+    addDebugLog('=== INITIALIZATION START ===');
+    addDebugLog(`Props check - documentId: ${!!documentId}, userId: ${!!userId}, editorRef: ${!!editorRef.current}`);
+    
+    if (!documentId || !userId) {
+      addDebugLog('CRITICAL: Missing documentId or userId');
+      setInitializationStatus('Error: Missing required props');
+      return;
+    }
+    
+    if (!editorRef.current) {
+      addDebugLog('CRITICAL: editorRef.current is null - DOM element not ready');
+      setInitializationStatus('Error: DOM element not ready');
+      return;
+    }
 
-    addDebugLog(`Starting editor initialization with documentId: ${documentId}, userId: ${userId}`);
+    // Additional import validation
+    const importChecks = {
+      EditorState: !!EditorState,
+      EditorView: !!EditorView,
+      history: !!history,
+      Y: !!Y,
+      YProsemirror: !!YProsemirror,
+      screenplaySchema: !!screenplaySchema,
+      screenplayKeymap: !!screenplayKeymap,
+      screenplayCommands: !!screenplayCommands,
+      YSocketProvider: !!YSocketProvider
+    };
+    
+    addDebugLog('Import validation results:', importChecks);
+    
+    const failedImports = Object.entries(importChecks).filter(([key, value]) => !value);
+    if (failedImports.length > 0) {
+      addDebugLog(`CRITICAL: Failed imports detected: ${failedImports.map(([key]) => key).join(', ')}`);
+      setInitializationStatus(`Error: Missing imports - ${failedImports.map(([key]) => key).join(', ')}`);
+      setIsInitialized(true); // Show error state
+      return;
+    }
+
+    addDebugLog('All imports validated successfully');
     setInitializationStatus('Initializing ProseMirror and Y.js...');
 
     try {
+      addDebugLog('Step 1: Creating Y.js document...');
       // Initialize Yjs
-      addDebugLog('Creating Y.js document');
       ydocRef.current = new Y.Doc();
+      addDebugLog('Y.js document created successfully');
+      
+      addDebugLog('Step 2: Getting XML fragment...');
       const yXmlFragment = ydocRef.current.getXmlFragment('prosemirror');
-      addDebugLog('Y.js document and fragment created');
+      addDebugLog('XML fragment obtained successfully');
 
+      addDebugLog('Step 3: Creating socket provider...');
       // Initialize socket provider
-      addDebugLog('Creating socket provider');
       providerRef.current = new YSocketProvider(documentId, ydocRef.current);
-      addDebugLog('Socket provider created');
+      addDebugLog('Socket provider created successfully');
       
       providerRef.current.onConnect = () => {
         addDebugLog('Socket connected to document');
@@ -470,28 +523,36 @@ export default function Editor({ documentId, userId, onUsersChange }) {
         onUsersChange?.(users);
       };
 
+      addDebugLog('Step 4: Joining document...');
       // Join document
-      addDebugLog('Joining document');
       providerRef.current.joinDocument(userId);
       addDebugLog('Document join request sent');
 
+      addDebugLog('Step 5: Creating ProseMirror plugins...');
+      const plugins = [
+        YProsemirror.ySyncPlugin(yXmlFragment),
+        YProsemirror.yUndoPlugin(),
+        history(),
+        screenplayKeymap
+      ];
+      
+      addDebugLog(`Created ${plugins.length} plugins successfully`);
+      plugins.forEach((plugin, index) => {
+        addDebugLog(`Plugin ${index}:`, plugin?.key || 'unknown plugin');
+      });
+
+      addDebugLog('Step 6: Creating ProseMirror state...');
       // Create ProseMirror state
-      addDebugLog('Creating ProseMirror state with plugins');
       const state = EditorState.create({
         schema: screenplaySchema,
-        plugins: [
-          YProsemirror.ySyncPlugin(yXmlFragment),
-          YProsemirror.yUndoPlugin(),
-          history(),
-          screenplayKeymap
-        ]
+        plugins: plugins
       });
-      addDebugLog('ProseMirror state created');
+      addDebugLog('ProseMirror state created successfully');
 
+      addDebugLog('Step 7: Creating ProseMirror editor view...');
       // Create editor view with throttled updates for performance
       let updateTimeout = null;
       
-      addDebugLog('Creating ProseMirror editor view');
       viewRef.current = new EditorView(editorRef.current, {
         state,
         dispatchTransaction: (transaction) => {
@@ -501,6 +562,7 @@ export default function Editor({ documentId, userId, onUsersChange }) {
           }
           
           try {
+            addDebugLog('Processing transaction...');
             const view = viewRef.current;
             const newState = view.state.apply(transaction);
             view.updateState(newState);
@@ -509,6 +571,7 @@ export default function Editor({ documentId, userId, onUsersChange }) {
             if (updateTimeout) clearTimeout(updateTimeout);
             updateTimeout = setTimeout(() => {
               updatePages(view);
+              addDebugLog('Page update completed');
             }, 150); // 150ms debounce
             
             // Track current element type
@@ -523,20 +586,23 @@ export default function Editor({ documentId, userId, onUsersChange }) {
           }
         }
       });
-      addDebugLog('ProseMirror editor view created');
+      addDebugLog('ProseMirror editor view created successfully');
 
-      addDebugLog('Performing initial page update');
+      addDebugLog('Step 8: Performing initial page update...');
       updatePages(viewRef.current);
+      addDebugLog('Initial page update completed');
       
-      addDebugLog('Editor initialization completed successfully');
+      addDebugLog('=== INITIALIZATION COMPLETED SUCCESSFULLY ===');
       setIsInitialized(true);
       setInitializationStatus('Ready');
 
     } catch (error) {
-      addDebugLog(`Critical error during initialization: ${error.message}`);
+      addDebugLog(`=== CRITICAL ERROR DURING INITIALIZATION ===`);
+      addDebugLog(`Error message: ${error.message}`);
+      addDebugLog(`Error stack: ${error.stack}`);
       console.error('Editor initialization error:', error);
       setInitializationStatus(`Error: ${error.message}`);
-      // Set initialized to true anyway to show error state
+      // Set initialized to true to show error state
       setIsInitialized(true);
     }
 
