@@ -12,6 +12,40 @@ import { screenplayKeymap } from '@/lib/prosemirror/keymap';
 import { screenplayCommands } from '@/lib/prosemirror/commands';
 import { YSocketProvider } from '@/lib/ySocketProvider';
 
+// Error Boundary Component
+class EditorErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('Editor Error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="editor-error bg-red-50 border border-red-200 rounded p-4">
+          <h3 className="text-red-800 font-semibold mb-2">Editor failed to initialize</h3>
+          <pre className="text-sm text-red-600 mb-4">{this.state.error?.message}</pre>
+          <button 
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            Reload Page
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // === IMPORT DEBUGGING ===
 console.log('=== EDITOR.JSX IMPORT CHECK ===');
 console.log('EditorState:', EditorState);
@@ -26,9 +60,70 @@ console.log('screenplayCommands:', screenplayCommands);
 console.log('YSocketProvider:', YSocketProvider);
 console.log('=== END IMPORT CHECK ===');
 
-const ELEMENTS_PER_PAGE = 15;
+// Import Validation
+const validateImports = () => {
+  const required = {
+    'EditorState': EditorState,
+    'EditorView': EditorView,
+    'Y': Y,
+    'YProsemirror': YProsemirror,
+    'screenplaySchema': screenplaySchema,
+    'screenplayKeymap': screenplayKeymap,
+    'screenplayCommands': screenplayCommands,
+    'YSocketProvider': YSocketProvider
+  };
+  
+  const missing = Object.entries(required)
+    .filter(([name, module]) => !module)
+    .map(([name]) => name);
+    
+  if (missing.length > 0) {
+    throw new Error(`Missing imports: ${missing.join(', ')}`);
+  }
+  
+  console.log('✅ All imports validated successfully');
+};
+
+// Debug Component
+const EditorDebugger = ({ editorElement, isInitialized, debugLogs, initializationStatus }) => {
+  const [expanded, setExpanded] = useState(false);
+  
+  return (
+    <div style={{ position: 'fixed', top: 10, right: 10, zIndex: 9999 }}>
+      <button 
+        onClick={() => setExpanded(!expanded)}
+        className="bg-blue-500 text-white px-3 py-1 rounded text-sm"
+      >
+        🐛 Debug ({debugLogs.length})
+      </button>
+      {expanded && (
+        <div style={{ 
+          background: 'white', 
+          border: '1px solid #ccc', 
+          padding: 10, 
+          maxHeight: 300, 
+          overflow: 'auto',
+          width: 400
+        }}>
+          <div>DOM Ready: {!!editorElement ? '✅' : '❌'}</div>
+          <div>Initialized: {isInitialized ? '✅' : '❌'}</div>
+          <div>Status: {initializationStatus}</div>
+          <div className="mt-2">Recent Logs:</div>
+          <pre style={{ fontSize: 10, background: '#f5f5f5', padding: 5 }}>
+            {debugLogs.slice(-10).join('\n')}
+          </pre>
+          <button
+            onClick={() => console.log('Full debug logs:', debugLogs)}
+            className="mt-2 text-xs bg-gray-200 px-2 py-1 rounded"
+          >
+            Log All to Console
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
 const PAGE_HEIGHT = 1122;
-const WORKER_CHUNK_SIZE = 50; // Process pages in chunks of 50
 
 // Web Worker for pagination processing
 const createPaginationWorker = () => {
@@ -171,140 +266,31 @@ const createDocumentWorker = () => {
   return new Worker(URL.createObjectURL(blob));
 };
 
-export default function Editor({ documentId, userId, onUsersChange }) {
-  const editorRef = useRef(null);
+// Main Editor Component (wrapped in error boundary)
+function EditorCore({ documentId, userId, onUsersChange }) {
+  // Use callback ref instead of useRef for better DOM timing
+  const [editorElement, setEditorElement] = useState(null);
+  const editorRef = useCallback((node) => {
+    console.log('Editor ref callback:', !!node);
+    if (node !== null) {
+      setEditorElement(node);
+    }
+  }, []);
+  
   const viewRef = useRef(null);
   const ydocRef = useRef(null);
   const providerRef = useRef(null);
-  const paginationWorkersRef = useRef([]);
-  const documentWorkerRef = useRef(null);
   const [pages, setPages] = useState([]);
   const [currentElementType, setCurrentElementType] = useState('action');
   const [isInitialized, setIsInitialized] = useState(false);
-  const [processingPages, setProcessingPages] = useState(false);
-  const [workerPool, setWorkerPool] = useState([]);
   const [initializationStatus, setInitializationStatus] = useState('Starting...');
   const [debugLogs, setDebugLogs] = useState([]);
-
-  // DOM readiness check - runs BEFORE main initialization
-  useEffect(() => {
-    // Wait for DOM element to be ready
-    const checkDOMReady = () => {
-      if (editorRef.current) {
-        addDebugLog('DOM element is now ready, triggering initialization');
-        return true;
-      }
-      return false;
-    };
-
-    // If DOM is not ready, wait for it
-    if (!editorRef.current) {
-      addDebugLog('DOM element not ready, setting up observer');
-      
-      const observer = new MutationObserver(() => {
-        if (checkDOMReady()) {
-          observer.disconnect();
-          // Trigger a re-render to run the main initialization
-          setInitializationStatus('DOM Ready - Starting initialization...');
-        }
-      });
-
-      // Start observing
-      if (document.body) {
-        observer.observe(document.body, { 
-          childList: true, 
-          subtree: true 
-        });
-      }
-
-      // Also try a simple timeout fallback
-      const timeoutId = setTimeout(() => {
-        if (checkDOMReady()) {
-          observer.disconnect();
-          setInitializationStatus('DOM Ready (timeout) - Starting initialization...');
-        } else {
-          addDebugLog('DOM still not ready after timeout');
-        }
-      }, 100);
-
-      return () => {
-        observer.disconnect();
-        clearTimeout(timeoutId);
-      };
-    }
-  }, []); // Empty dependency array - only run once
 
   // Debug logging function
   const addDebugLog = (message) => {
     console.log(`[Editor Debug] ${message}`);
     setDebugLogs(prev => [...prev, `${new Date().toISOString()}: ${message}`]);
   };
-
-  // Initialize worker pool
-  useEffect(() => {
-    addDebugLog('Starting worker pool initialization');
-    setInitializationStatus('Creating Web Workers...');
-    
-    const numWorkers = Math.min(navigator.hardwareConcurrency || 4, 8); // Max 8 workers
-    const workers = [];
-    
-    addDebugLog(`Attempting to create ${numWorkers} web workers for pagination`);
-    
-    for (let i = 0; i < numWorkers; i++) {
-      try {
-        addDebugLog(`Creating pagination worker ${i + 1}/${numWorkers}`);
-        const worker = createPaginationWorker();
-        if (worker) {
-          addDebugLog(`Pagination worker ${i + 1} created successfully`);
-        } else {
-          addDebugLog(`Pagination worker ${i + 1} creation returned null/undefined`);
-        }
-        workers.push(worker);
-      } catch (error) {
-        addDebugLog(`Failed to create pagination worker ${i + 1}: ${error.message}`);
-        console.error('Worker creation error:', error);
-      }
-    }
-    
-    // Create document processing worker
-    try {
-      addDebugLog('Creating document processing worker');
-      documentWorkerRef.current = createDocumentWorker();
-      if (documentWorkerRef.current) {
-        addDebugLog('Document processing worker created successfully');
-      } else {
-        addDebugLog('Document processing worker creation returned null/undefined');
-      }
-    } catch (error) {
-      addDebugLog(`Failed to create document worker: ${error.message}`);
-      console.error('Document worker creation error:', error);
-    }
-    
-    paginationWorkersRef.current = workers;
-    setWorkerPool(workers);
-    addDebugLog(`Worker pool initialization complete. Created ${workers.length} workers successfully`);
-    setInitializationStatus(`Worker pool ready (${workers.length} workers)`);
-    
-    return () => {
-      // Cleanup workers
-      addDebugLog('Cleaning up workers');
-      workers.forEach(worker => {
-        try {
-          worker.terminate();
-        } catch (error) {
-          addDebugLog(`Error terminating worker: ${error.message}`);
-        }
-      });
-      
-      if (documentWorkerRef.current) {
-        try {
-          documentWorkerRef.current.terminate();
-        } catch (error) {
-          addDebugLog(`Error terminating document worker: ${error.message}`);
-        }
-      }
-    };
-  }, []);
 
   const calculateElementHeight = (node) => {
     const baseHeight = 24;
@@ -326,123 +312,11 @@ export default function Editor({ documentId, userId, onUsersChange }) {
     return baseHeight * linesNeeded * multiplier + 12;
   };
 
-  // Multi-threaded pagination update
-  const updatePages = useCallback(async (view) => {
-    if (!view || !view.state || paginationWorkersRef.current.length === 0) {
-      return fallbackUpdatePages(view);
-    }
-    
-    setProcessingPages(true);
-    
-    try {
-      const doc = view.state.doc;
-      const allElements = [];
-      
-      // Extract all elements from document
-      doc.descendants((node, pos) => {
-        if (node.type.name === 'screenplay_element') {
-          allElements.push({
-            type: node.attrs.type,
-            content: node.textContent,
-            dual: node.attrs.dual,
-            pos
-          });
-        }
-      });
-
-      if (allElements.length === 0) {
-        setPages([]);
-        setProcessingPages(false);
-        return;
-      }
-
-      console.log(`Processing ${allElements.length} elements across ${paginationWorkersRef.current.length} workers`);
-
-      // Split work across workers
-      const chunkSize = Math.ceil(allElements.length / paginationWorkersRef.current.length);
-      const workerPromises = [];
-      
-      for (let i = 0; i < paginationWorkersRef.current.length; i++) {
-        const startIndex = i * chunkSize;
-        const endIndex = Math.min(startIndex + chunkSize, allElements.length);
-        const chunk = allElements.slice(startIndex, endIndex);
-        
-        if (chunk.length === 0) continue;
-        
-        const worker = paginationWorkersRef.current[i];
-        
-        const promise = new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error('Worker timeout'));
-          }, 10000); // 10 second timeout
-          
-          worker.onmessage = (e) => {
-            clearTimeout(timeout);
-            if (e.data.success) {
-              resolve(e.data.pages);
-            } else {
-              reject(new Error(e.data.error));
-            }
-          };
-          
-          worker.onerror = (error) => {
-            clearTimeout(timeout);
-            reject(error);
-          };
-          
-          worker.postMessage({
-            elements: chunk,
-            startIndex,
-            chunkSize: chunk.length,
-            pageHeight: PAGE_HEIGHT
-          });
-        });
-        
-        workerPromises.push(promise);
-      }
-
-      // Wait for all workers to complete
-      const results = await Promise.allSettled(workerPromises);
-      
-      // Combine results from all workers
-      const allPages = [];
-      results.forEach((result, index) => {
-        if (result.status === 'fulfilled') {
-          allPages.push(...result.value);
-        } else {
-          console.error(`Worker ${index} failed:`, result.reason);
-        }
-      });
-
-      // Sort pages by index and convert to the expected format
-      allPages.sort((a, b) => a.pageIndex - b.pageIndex);
-      
-      const finalPages = allPages.map(page => 
-        page.elements.map(element => ({
-          node: {
-            attrs: { type: element.type, dual: element.dual },
-            textContent: element.content
-          },
-          pos: element.pos
-        }))
-      );
-
-      setPages(finalPages);
-      console.log(`Pagination completed: ${finalPages.length} pages processed by ${paginationWorkersRef.current.length} workers`);
-      
-    } catch (error) {
-      console.error('Multi-threaded pagination failed, falling back to single-thread:', error);
-      fallbackUpdatePages(view);
-    } finally {
-      setProcessingPages(false);
-    }
-  }, []);
-
-  // Fallback single-threaded pagination
-  const fallbackUpdatePages = useCallback((view) => {
+  // Simple pagination update (removing complex multi-threading for now)
+  const updatePages = useCallback((view) => {
     if (!view || !view.state) return;
     
-    console.log('Using fallback single-threaded pagination');
+    addDebugLog('Updating pages');
     
     const doc = view.state.doc;
     const newPages = [];
@@ -469,170 +343,352 @@ export default function Editor({ documentId, userId, onUsersChange }) {
     }
 
     setPages(newPages);
-    console.log(`Single-threaded pagination completed: ${newPages.length} pages`);
+    addDebugLog(`Page update completed: ${newPages.length} pages`);
   }, []);
 
-  // Multi-threaded document search
-  const searchDocument = useCallback(async (query) => {
-    if (!documentWorkerRef.current || !viewRef.current) {
-      return [];
-    }
-
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error('Search timeout'));
-      }, 5000);
-
-      documentWorkerRef.current.onmessage = (e) => {
-        clearTimeout(timeout);
-        if (e.data.success && e.data.operation === 'searchElements') {
-          resolve(e.data.results);
-        } else {
-          reject(new Error(e.data.error));
-        }
-      };
-
-      const elements = getDocumentElements();
-      documentWorkerRef.current.postMessage({
-        operation: 'searchElements',
-        docData: { elements },
-        query
-      });
-    });
-  }, []);
+  // Alternative initialization strategy with polling
 
   useEffect(() => {
-    addDebugLog('=== INITIALIZATION START ===');
-    addDebugLog(`Props check - documentId: ${!!documentId}, userId: ${!!userId}, editorRef: ${!!editorRef.current}`);
+    let mounted = true;
     
-    // Add DOM readiness check at the start
+    addDebugLog('=== INITIALIZATION START ===');
+    addDebugLog(`Props check - documentId: ${!!documentId}, userId: ${!!userId}, editorElement: ${!!editorElement}`);
+    
     if (!documentId || !userId) {
       addDebugLog('Missing required props - documentId or userId');
       setInitializationStatus('Error: Missing required props');
       return;
     }
     
-    if (!editorRef.current) {
-      addDebugLog('DOM element still not ready, waiting...');
-      return; // Exit early, let the DOM observer handle it
-    }
+    const initializeWhenReady = async () => {
+      // Wait for DOM element
+      addDebugLog('Waiting for DOM element...');
+      while (!editorElement && mounted) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      
+      if (!mounted) {
+        addDebugLog('Component unmounted during initialization');
+        return;
+      }
+      
+      addDebugLog('DOM element is ready, starting initialization');
 
-    addDebugLog(`Starting editor initialization with documentId: ${documentId}, userId: ${userId}`);
+      try {
+        // Validate imports first
+        addDebugLog('Validating imports...');
+        validateImports();
+        
+        addDebugLog(`Starting editor initialization with documentId: ${documentId}, userId: ${userId}`);
+        setInitializationStatus('Initializing ProseMirror and Y.js...');
 
-    // Additional import validation
-    const importChecks = {
-      EditorState: !!EditorState,
-      EditorView: !!EditorView,
-      history: !!history,
-      Y: !!Y,
-      YProsemirror: !!YProsemirror,
-      screenplaySchema: !!screenplaySchema,
-      screenplayKeymap: !!screenplayKeymap,
-      screenplayCommands: !!screenplayCommands,
-      YSocketProvider: !!YSocketProvider
+        addDebugLog('Step 1: Creating Y.js document...');
+        ydocRef.current = new Y.Doc();
+        addDebugLog('Y.js document created successfully');
+        
+        addDebugLog('Step 2: Getting XML fragment...');
+        const yXmlFragment = ydocRef.current.getXmlFragment('prosemirror');
+        addDebugLog('XML fragment obtained successfully');
+
+        addDebugLog('Step 3: Creating socket provider...');
+        providerRef.current = new YSocketProvider(documentId, ydocRef.current);
+        addDebugLog('Socket provider created successfully');
+        
+        providerRef.current.onConnect = () => {
+          addDebugLog('Socket connected to document');
+        };
+        
+        providerRef.current.onUserJoined = (socketId, userId, userInfo) => {
+          addDebugLog(`User joined: ${userId} (socket: ${socketId})`);
+        };
+        
+        providerRef.current.onCurrentUsers = (users) => {
+          addDebugLog(`Current users updated: ${users.length} users`);
+          onUsersChange?.(users);
+        };
+
+        addDebugLog('Step 4: Joining document...');
+        providerRef.current.joinDocument(userId);
+        addDebugLog('Document join request sent');
+
+        addDebugLog('Step 5: Creating ProseMirror plugins...');
+        const plugins = [
+          YProsemirror.ySyncPlugin(yXmlFragment),
+          YProsemirror.yUndoPlugin(),
+          history(),
+          screenplayKeymap
+        ];
+        
+        addDebugLog(`Created ${plugins.length} plugins successfully`);
+
+        addDebugLog('Step 6: Creating ProseMirror state...');
+        const state = EditorState.create({
+          schema: screenplaySchema,
+          plugins: plugins
+        });
+        addDebugLog('ProseMirror state created successfully');
+
+        addDebugLog('Step 7: Creating ProseMirror editor view...');
+        let updateTimeout = null;
+        
+        viewRef.current = new EditorView(editorElement, {
+          state,
+          dispatchTransaction: (transaction) => {
+            if (!viewRef.current || !viewRef.current.state) {
+              addDebugLog('Transaction dispatch warning: EditorView or state not ready');
+              return;
+            }
+            
+            try {
+              addDebugLog('Processing transaction...');
+              const view = viewRef.current;
+              const newState = view.state.apply(transaction);
+              view.updateState(newState);
+              
+              // Throttle page updates
+              if (updateTimeout) clearTimeout(updateTimeout);
+              updateTimeout = setTimeout(() => {
+                updatePages(view);
+                addDebugLog('Page update completed');
+              }, 150);
+              
+              // Track current element type
+              const { $head } = newState.selection;
+              const currentNode = $head.node();
+              if (currentNode && currentNode.attrs && currentNode.attrs.type) {
+                setCurrentElementType(currentNode.attrs.type);
+              }
+            } catch (error) {
+              addDebugLog(`Error applying transaction: ${error.message}`);
+              console.error('Transaction error:', error);
+            }
+          }
+        });
+        addDebugLog('ProseMirror editor view created successfully');
+
+        addDebugLog('Step 8: Performing initial page update...');
+        updatePages(viewRef.current);
+        addDebugLog('Initial page update completed');
+        
+        if (mounted) {
+          addDebugLog('=== INITIALIZATION COMPLETED SUCCESSFULLY ===');
+          setIsInitialized(true);
+          setInitializationStatus('Ready');
+        }
+
+      } catch (error) {
+        addDebugLog(`=== CRITICAL ERROR DURING INITIALIZATION ===`);
+        addDebugLog(`Error message: ${error.message}`);
+        addDebugLog(`Error stack: ${error.stack}`);
+        console.error('Editor initialization error:', error);
+        if (mounted) {
+          setInitializationStatus(`Error: ${error.message}`);
+          setIsInitialized(true); // Show error state
+        }
+      }
     };
     
-    addDebugLog('Import validation results:', importChecks);
+    initializeWhenReady();
     
-    const failedImports = Object.entries(importChecks).filter(([key, value]) => !value);
-    if (failedImports.length > 0) {
-      addDebugLog(`CRITICAL: Failed imports detected: ${failedImports.map(([key]) => key).join(', ')}`);
-      setInitializationStatus(`Error: Missing imports - ${failedImports.map(([key]) => key).join(', ')}`);
-      setIsInitialized(true); // Show error state
-      return;
+    return () => {
+      mounted = false;
+      addDebugLog('Starting editor cleanup');
+      setIsInitialized(false);
+      setInitializationStatus('Cleaning up...');
+      
+      if (viewRef.current) {
+        try {
+          viewRef.current.destroy();
+          addDebugLog('ProseMirror view destroyed');
+        } catch (error) {
+          addDebugLog(`Error destroying editor view: ${error.message}`);
+        }
+        viewRef.current = null;
+      }
+      
+      if (providerRef.current) {
+        try {
+          providerRef.current.destroy();
+          addDebugLog('Socket provider destroyed');
+        } catch (error) {
+          addDebugLog(`Error destroying provider: ${error.message}`);
+        }
+        providerRef.current = null;
+      }
+      
+      if (ydocRef.current) {
+        try {
+          ydocRef.current.destroy();
+          addDebugLog('Y.js document destroyed');
+        } catch (error) {
+          addDebugLog(`Error destroying Y.js doc: ${error.message}`);
+        }
+        ydocRef.current = null;
+      }
+      
+      addDebugLog('Editor cleanup completed');
+    };
+  }, [documentId, userId, editorElement, updatePages]);
+
+  // Fixed executeCommand function
+  const executeCommand = useCallback((commandName) => {
+    if (!viewRef.current || !isInitialized) {
+      console.warn('Editor not ready for commands');
+      return false;
     }
 
-    addDebugLog('All imports validated successfully');
-    setInitializationStatus('Initializing ProseMirror and Y.js...');
-
     try {
-      addDebugLog('Step 1: Creating Y.js document...');
-      // Initialize Yjs
-      ydocRef.current = new Y.Doc();
-      addDebugLog('Y.js document created successfully');
+      const commandFunction = screenplayCommands[commandName];
       
-      addDebugLog('Step 2: Getting XML fragment...');
-      const yXmlFragment = ydocRef.current.getXmlFragment('prosemirror');
-      addDebugLog('XML fragment obtained successfully');
+      if (!commandFunction) {
+        console.error('Command not found:', commandName);
+        return false;
+      }
 
-      addDebugLog('Step 3: Creating socket provider...');
-      // Initialize socket provider
-      providerRef.current = new YSocketProvider(documentId, ydocRef.current);
-      addDebugLog('Socket provider created successfully');
+      const command = commandFunction();
       
-      providerRef.current.onConnect = () => {
-        addDebugLog('Socket connected to document');
-      };
-      
-      providerRef.current.onUserJoined = (socketId, userId, userInfo) => {
-        addDebugLog(`User joined: ${userId} (socket: ${socketId})`);
-      };
-      
-      providerRef.current.onCurrentUsers = (users) => {
-        addDebugLog(`Current users updated: ${users.length} users`);
-        onUsersChange?.(users);
-      };
+      if (typeof command === 'function') {
+        const result = command(viewRef.current.state, viewRef.current.dispatch);
+        viewRef.current.focus();
+        return result;
+      } else {
+        console.error('Command did not return a function:', commandName);
+        return false;
+      }
+    } catch (error) {
+      console.error('Error executing command:', commandName, error);
+      return false;
+    }
+  }, [isInitialized]);
 
-      addDebugLog('Step 4: Joining document...');
-      // Join document
-      providerRef.current.joinDocument(userId);
-      addDebugLog('Document join request sent');
+  const getDocumentElements = useCallback(() => {
+    if (!viewRef.current || !isInitialized) return [];
+    
+    const elements = [];
+    const doc = viewRef.current.state.doc;
+    
+    doc.descendants((node) => {
+      if (node.type.name === 'screenplay_element') {
+        elements.push({
+          type: node.attrs.type,
+          content: node.textContent,
+          dual: node.attrs.dual
+        });
+      }
+    });
+    
+    return elements;
+  }, [isInitialized]);
 
-      addDebugLog('Step 5: Creating ProseMirror plugins...');
-      const plugins = [
-        YProsemirror.ySyncPlugin(yXmlFragment),
-        YProsemirror.yUndoPlugin(),
-        history(),
-        screenplayKeymap
-      ];
+  if (!documentId || !userId) {
+    return <div className="editor-loading">Missing document ID or user ID</div>;
+  }
+
+  return (
+    <div className="editor-container">
+      {/* Debug Component */}
+      <EditorDebugger 
+        editorElement={editorElement}
+        isInitialized={isInitialized} 
+        debugLogs={debugLogs}
+        initializationStatus={initializationStatus}
+      />
       
-      addDebugLog(`Created ${plugins.length} plugins successfully`);
-      plugins.forEach((plugin, index) => {
-        addDebugLog(`Plugin ${index}:`, plugin?.key || 'unknown plugin');
-      });
+      {/* Toolbar */}
+      <div className="screenplay-toolbar">
+        <div className="toolbar-section">
+          {Object.entries(screenplayElementTypes).map(([key, type]) => {
+            const commandName = `set${key.charAt(0).toUpperCase() + key.slice(1).toLowerCase()}`;
+            return (
+              <button
+                key={type}
+                className={`toolbar-button ${currentElementType === type ? 'active' : ''}`}
+                onClick={() => executeCommand(commandName)}
+                title={`${key} (Alt+${key.charAt(0)})`}
+                disabled={!isInitialized}
+              >
+                {key.replace('_', ' ')}
+              </button>
+            );
+          })}
+        </div>
+        
+        <div className="toolbar-info">
+          <span className="page-count">
+            {pages.length} pages
+          </span>
+        </div>
+      </div>
 
-      addDebugLog('Step 6: Creating ProseMirror state...');
-      // Create ProseMirror state
-      const state = EditorState.create({
-        schema: screenplaySchema,
-        plugins: plugins
-      });
-      addDebugLog('ProseMirror state created successfully');
-
-      addDebugLog('Step 7: Creating ProseMirror editor view...');
-      // Create editor view with throttled updates for performance
-      let updateTimeout = null;
-      
-      viewRef.current = new EditorView(editorRef.current, {
-        state,
-        dispatchTransaction: (transaction) => {
-          if (!viewRef.current || !viewRef.current.state) {
-            addDebugLog('Transaction dispatch warning: EditorView or state not ready');
-            return;
-          }
-          
-          try {
-            addDebugLog('Processing transaction...');
-            const view = viewRef.current;
-            const newState = view.state.apply(transaction);
-            view.updateState(newState);
+      {/* Editor */}
+      <div className="editor-wrapper">
+        {!isInitialized ? (
+          <div className="editor-loading">
+            <div className="text-lg font-semibold mb-4">
+              {initializationStatus.startsWith('Error:') ? '❌ Editor Error' : '⏳ Initializing editor...'}
+            </div>
+            <div className="text-sm text-gray-600 mb-4">{initializationStatus}</div>
             
-            // Throttle page updates for better performance with large documents
-            if (updateTimeout) clearTimeout(updateTimeout);
-            updateTimeout = setTimeout(() => {
-              updatePages(view);
-              addDebugLog('Page update completed');
-            }, 150); // 150ms debounce
-            
-            // Track current element type
-            const { $head } = newState.selection;
-            const currentNode = $head.node();
-            if (currentNode && currentNode.attrs && currentNode.attrs.type) {
-              setCurrentElementType(currentNode.attrs.type);
-            }
-          } catch (error) {
-            addDebugLog(`Error applying transaction: ${error.message}`);
-            console.error('Transaction error:', error);
+            {initializationStatus.startsWith('Error:') && (
+              <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded">
+                <h4 className="font-semibold text-red-800 mb-2">Troubleshooting Steps:</h4>
+                <ul className="text-sm text-red-700 list-disc list-inside">
+                  <li>Check browser console for import errors</li>
+                  <li>Verify all ProseMirror packages are installed</li>
+                  <li>Ensure schema, keymap, and commands files exist</li>
+                  <li>Check if DOM element is ready</li>
+                </ul>
+              </div>
+            )}
+          </div>
+        ) : pages.length > 0 ? (
+          <div className="pages-container" style={{ height: '800px', overflow: 'auto' }}>
+            {pages.map((page, index) => (
+              <div key={index} className="page-container">
+                <div className="page">
+                  <div className="page-number">{index + 1}.</div>
+                  <div className="page-content">
+                    <div className="screenplay-elements">
+                      {page?.map((element, elementIndex) => (
+                        <div 
+                          key={elementIndex}
+                          className={`screenplay-element element-${element.node.attrs.type}`}
+                          data-type={element.node.attrs.type}
+                        >
+                          {element.node.textContent}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="page-container">
+            <div className="page">
+              <div 
+                className="page-content" 
+                ref={editorRef}
+                data-editor="prosemirror"
+                data-ready={!!editorElement}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Export with Error Boundary
+export default function Editor(props) {
+  return (
+    <EditorErrorBoundary>
+      <EditorCore {...props} />
+    </EditorErrorBoundary>
+  );
+}
           }
         }
       });
