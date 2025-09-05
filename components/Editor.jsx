@@ -770,15 +770,35 @@ export default function Editor({ documentId, userId, onUsersChange }) {
       <div className="editor-wrapper">
         {!isInitialized ? (
           <div className="editor-loading">
-            <div className="text-lg font-semibold mb-4">Initializing editor...</div>
+            <div className="text-lg font-semibold mb-4">
+              {initializationStatus.startsWith('Error:') ? '❌ Editor Error' : '⏳ Initializing editor...'}
+            </div>
             <div className="text-sm text-gray-600 mb-4">{initializationStatus}</div>
             <div>Setting up {workerPool.length} web workers for optimization</div>
+            
+            {initializationStatus.startsWith('Error:') && (
+              <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded">
+                <h4 className="font-semibold text-red-800 mb-2">Troubleshooting Steps:</h4>
+                <ul className="text-sm text-red-700 list-disc list-inside">
+                  <li>Check browser console for import errors</li>
+                  <li>Verify all ProseMirror packages are installed</li>
+                  <li>Ensure schema, keymap, and commands files exist</li>
+                  <li>Check if editorRef DOM element is ready</li>
+                </ul>
+              </div>
+            )}
+            
             <div className="mt-6">
               <details className="text-xs">
                 <summary className="cursor-pointer mb-2">Debug Logs ({debugLogs.length})</summary>
-                <div className="max-h-48 overflow-y-auto bg-gray-100 p-2 rounded border text-xs font-mono">
+                <div className="max-h-64 overflow-y-auto bg-gray-100 p-2 rounded border text-xs font-mono">
                   {debugLogs.map((log, index) => (
-                    <div key={index} className="mb-1">{log}</div>
+                    <div 
+                      key={index} 
+                      className={`mb-1 ${log.includes('CRITICAL') || log.includes('ERROR') ? 'text-red-600 font-bold' : ''}`}
+                    >
+                      {log}
+                    </div>
                   ))}
                 </div>
               </details>
